@@ -9,7 +9,6 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-      # 这一步会将你仓库里的所有文件（包括你上传的 pandoc.exe）拉取到构建服务器
 
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -20,11 +19,30 @@ jobs:
       run: |
         pip install .
         pip install pyinstaller
-
-    # --- 删除掉了 "Download Pandoc" 步骤 ---
+        
+    - name: Download Pandoc (Windows)
+      run: |
+        # 下载
+        Invoke-WebRequest -Uri "https://github.com/jgm/pandoc/releases/download/3.6/pandoc-3.6-windows-x86_64.zip" -OutFile "pandoc.zip"
+        # 解压到当前目录
+        Expand-Archive pandoc.zip -DestinationPath .
+        
+        # 关键修改：不猜文件夹名，而是递归查找 pandoc.exe 到底在哪里
+        $pandocExe = Get-ChildItem -Path . -Filter pandoc.exe -Recurse | Select-Object -First 1
+        
+        if ($pandocExe) {
+            Write-Host "Found pandoc at: $($pandocExe.FullName)"
+            # 如果它不在根目录下，就把它移出来
+            if ($pandocExe.Directory.FullName -ne (Get-Location).Path) {
+                Move-Item $pandocExe.FullName . -Force
+            }
+        } else {
+            Write-Error "Error: 解压后没找到 pandoc.exe！"
+            exit 1
+        }
 
     - name: Create entry.py
-      # 自动生成入口文件（保持不变）
+      # 自动生成包含路径处理的入口文件
       run: |
         echo "import sys, os, mcp_pandoc" > entry.py
         echo "from mcp_pandoc import main" >> entry.py
@@ -34,14 +52,8 @@ jobs:
         echo "    sys.exit(main())" >> entry.py
 
     - name: Build with PyInstaller
-      # 这一步会直接寻找当前目录下的 pandoc.exe
+      # 关键步骤：把 pandoc.exe 打包进去
       run: |
-        # 增加一个简单的检查，防止你忘记上传文件导致报错
-        if (-not (Test-Path "pandoc.exe")) {
-            Write-Error "错误: 没找到 pandoc.exe！请确保你已经把 pandoc.exe 上传到了仓库的根目录。"
-            exit 1
-        }
-        # 开始打包
         pyinstaller --onefile --name mcp-pandoc --add-binary "pandoc.exe;." entry.py
 
     - name: Upload Artifact
