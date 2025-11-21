@@ -1,7 +1,7 @@
 name: Build Windows EXE
 
 on:
-  workflow_dispatch: # 允许手动点击按钮触发
+  workflow_dispatch:
 
 jobs:
   build:
@@ -19,40 +19,51 @@ jobs:
       run: |
         pip install .
         pip install pyinstaller
-        
+
     - name: Download Pandoc (Windows)
+      shell: powershell
       run: |
-        # 下载
+        # 1. 下载 Pandoc 官方包
         Invoke-WebRequest -Uri "https://github.com/jgm/pandoc/releases/download/3.6/pandoc-3.6-windows-x86_64.zip" -OutFile "pandoc.zip"
-        # 解压到当前目录
+        # 2. 解压
         Expand-Archive pandoc.zip -DestinationPath .
-        
-        # 关键修改：不猜文件夹名，而是递归查找 pandoc.exe 到底在哪里
+        # 3. 智能查找 pandoc.exe 并移动到根目录
         $pandocExe = Get-ChildItem -Path . -Filter pandoc.exe -Recurse | Select-Object -First 1
-        
         if ($pandocExe) {
             Write-Host "Found pandoc at: $($pandocExe.FullName)"
-            # 如果它不在根目录下，就把它移出来
-            if ($pandocExe.Directory.FullName -ne (Get-Location).Path) {
-                Move-Item $pandocExe.FullName . -Force
-            }
+            Move-Item $pandocExe.FullName . -Force
         } else {
-            Write-Error "Error: 解压后没找到 pandoc.exe！"
+            Write-Error "Failed to find pandoc.exe in the zip archive!"
             exit 1
         }
 
-    - name: Create entry.py
-      # 自动生成包含路径处理的入口文件
+    - name: Create optimized entry.py
+      shell: python
       run: |
-        echo "import sys, os, mcp_pandoc" > entry.py
-        echo "from mcp_pandoc import main" >> entry.py
-        echo "if getattr(sys, 'frozen', False):" >> entry.py
-        echo "    os.environ['PYPANDOC_PANDOC'] = os.path.join(sys._MEIPASS, 'pandoc.exe')" >> entry.py
-        echo "if __name__ == '__main__':" >> entry.py
-        echo "    sys.exit(main())" >> entry.py
+        code = r"""
+        import sys, os
+        # --- 核心修复开始 ---
+        if sys.stdout:
+            sys.stdout.reconfigure(encoding='utf-8', line_buffering=True, write_through=True)
+        if sys.stdin:
+            sys.stdin.reconfigure(encoding='utf-8')
+        # --- 核心修复结束 ---
+
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+            pandoc_path = os.path.join(base_path, 'pandoc.exe')
+            os.environ['PYPANDOC_PANDOC'] = pandoc_path
+            os.environ['PANDOC_PATH'] = pandoc_path
+
+        from mcp_pandoc import main
+
+        if __name__ == "__main__":
+            main()
+        """
+        with open("entry.py", "w", encoding="utf-8") as f:
+            f.write(code)
 
     - name: Build with PyInstaller
-      # 关键步骤：把 pandoc.exe 打包进去
       run: |
         pyinstaller --onefile --name mcp-pandoc --add-binary "pandoc.exe;." entry.py
 
