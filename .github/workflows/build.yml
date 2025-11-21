@@ -1,0 +1,49 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch: # 允许手动点击按钮触发
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install Dependencies
+      run: |
+        pip install .
+        pip install pyinstaller
+
+    - name: Download Pandoc (Windows)
+      # 自动下载 pandoc.exe 到当前目录，用于打包
+      run: |
+        Invoke-WebRequest -Uri "https://github.com/jgm/pandoc/releases/download/3.6/pandoc-3.6-windows-x86_64.zip" -OutFile "pandoc.zip"
+        Expand-Archive pandoc.zip -DestinationPath .
+        Move-Item pandoc-3.6-windows-x86_64/pandoc.exe .
+
+    - name: Create entry.py
+      # 自动生成包含路径处理的入口文件
+      run: |
+        echo "import sys, os, mcp_pandoc" > entry.py
+        echo "from mcp_pandoc import main" >> entry.py
+        echo "if getattr(sys, 'frozen', False):" >> entry.py
+        echo "    os.environ['PYPANDOC_PANDOC'] = os.path.join(sys._MEIPASS, 'pandoc.exe')" >> entry.py
+        echo "if __name__ == '__main__':" >> entry.py
+        echo "    sys.exit(main())" >> entry.py
+
+    - name: Build with PyInstaller
+      # 关键步骤：把 pandoc.exe 打包进去
+      run: |
+        pyinstaller --onefile --name mcp-pandoc --add-binary "pandoc.exe;." entry.py
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: mcp-pandoc-exe
+        path: dist/mcp-pandoc.exe
